@@ -69,6 +69,13 @@ static func plate(parent: Node3D, outline: PackedVector2Array, height: float, th
     node.mesh = surface.commit()
     var mat := material(color, 0.25)
     mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+    # Feather plates need to stay legible against the blue arena even when
+    # the upper model rotates away from the directional light.
+    if color.r > 0.6 and color.g > 0.7 and color.b > 0.7:
+        mat.metallic = 0.05
+        mat.emission_enabled = true
+        mat.emission = color
+        mat.emission_energy_multiplier = 0.20
     node.material_override = mat
     parent.add_child(node)
 
@@ -98,19 +105,48 @@ static func make_view(parent: Node, kind: String) -> Dictionary:
     var camera := Camera3D.new()
     camera.projection = Camera3D.PROJECTION_ORTHOGONAL
     camera.size = 4.8 if kind in ["steel", "wing"] else 4.2
-    camera.position = Vector3(0, 7, 4.8)
+    # Use a true overhead view for vehicles: their +X muzzle then points at
+    # the same screen angle at every rotation. Blocks keep the angled view.
+    camera.position = Vector3(0, 9, .001) if kind in ["steel", "wing"] else Vector3(0, 7, 4.8)
     world.add_child(camera)
-    camera.look_at(Vector3.ZERO, Vector3.UP)
+    camera.look_at(Vector3.ZERO, Vector3(0, 0, -1) if kind in ["steel", "wing"] else Vector3.UP)
     camera.current = true
     var model := Node3D.new()
     world.add_child(model)
+    var hull := Node3D.new()
+    var turret := Node3D.new()
+    model.add_child(hull)
+    model.add_child(turret)
+    turret.position.y = .18
     if kind == "steel":
-        make_steel(model)
+        make_hull(hull, kind)
+        make_steel(turret)
     elif kind == "wing":
-        make_wing(model)
+        make_hull(hull, kind)
+        make_wing(turret)
     else:
         make_block(model, kind)
-    return {"viewport": viewport, "model": model}
+    return {"viewport": viewport, "model": model, "hull": hull, "turret": turret}
+
+static func make_hull(hull: Node3D, kind: String) -> void:
+    # Two tracks sit beneath the independently rotating upper armor.
+    var steel := kind == "steel"
+    var dark := Color("202a38") if steel else Color("263d51")
+    var track := Color("19232c")
+    var metal := Color("82929b") if steel else Color("9db7c5")
+    var trim := Color("ab3447") if steel else Color("3b8fbc")
+    ellipsoid(hull, Vector3(1.18, .23, .64), Vector3(-.12, .18, 0), dark)
+    cylinder(hull, .36, .12, Vector3(-.08, .44, 0), metal)
+    cylinder(hull, .25, .16, Vector3(-.08, .50, 0), dark)
+    for side in [-1, 1]:
+        var z: float = side * .82
+        ellipsoid(hull, Vector3(1.28, .24, .27), Vector3(-.22, .22, z), track)
+        box(hull, Vector3(1.76, .18, .15), Vector3(-.22, .40, z), dark)
+        box(hull, Vector3(1.36, .08, .12), Vector3(-.22, .51, z), trim)
+        for x in [-1.12, -.68, -.24, .20, .64]:
+            cylinder(hull, .22, .13, Vector3(x, .25, z + side * .19), metal, Vector3(PI / 2.0, 0, 0))
+            cylinder(hull, .11, .14, Vector3(x, .25, z + side * .27), dark, Vector3(PI / 2.0, 0, 0))
+            box(hull, Vector3(.09, .08, .39), Vector3(x, .45, z), Color("627381"))
 
 static func make_steel(model: Node3D) -> void:
     # Rounded crimson body, bright crown and paired mechanical outriggers,
@@ -123,6 +159,8 @@ static func make_steel(model: Node3D) -> void:
     ellipsoid(model, Vector3(1.18, .36, .79), Vector3(-.06, .39, 0), dark)
     ellipsoid(model, Vector3(1.08, .50, .72), Vector3(-.16, .75, 0), red)
     ellipsoid(model, Vector3(.82, .19, .59), Vector3(-.25, 1.10, 0), red_light)
+    ellipsoid(model, Vector3(.74, .045, .54), Vector3(-.25, 1.285, 0), red)
+    ellipsoid(model, Vector3(.62, .028, .44), Vector3(-.26, 1.325, 0), Color("dd5c6a"))
     ellipsoid(model, Vector3(.30, .16, .29), Vector3(-.49, 1.23, 0), metal)
     ellipsoid(model, Vector3(.21, .11, .20), Vector3(-.49, 1.35, 0), Color("dcefff"))
     cylinder(model, .37, .26, Vector3(.76, .68, 0), dark, Vector3(0, 0, PI / 2.0))
@@ -130,6 +168,7 @@ static func make_steel(model: Node3D) -> void:
     ellipsoid(model, Vector3(.22, .24, .24), Vector3(1.03, .68, 0), Color("fa6388"))
     cylinder(model, .12, .42, Vector3(1.28, .68, 0), dark, Vector3(0, 0, PI / 2.0))
     cylinder(model, .15, .12, Vector3(1.50, .68, 0), metal, Vector3(0, 0, PI / 2.0))
+    cylinder(model, .085, .13, Vector3(1.58, .68, 0), Color("1a2630"), Vector3(0, 0, PI / 2.0))
     for side in [-1, 1]:
         var z: float = side * .78
         cylinder(model, .28, .34, Vector3(-.18, .56, z), metal, Vector3(PI / 2.0, 0, 0))
@@ -142,6 +181,13 @@ static func make_steel(model: Node3D) -> void:
         box(model, Vector3(.15, .12, .52), Vector3(1.15, .38, z * 1.32), dark)
         ellipsoid(model, Vector3(.35, .28, .30), Vector3(-.48, .60, side * .67), red)
         cylinder(model, .12, .08, Vector3(-.88, .57, side * .48), gold, Vector3(0, 0, PI / 2.0))
+        # Visible connector rings, panel seams and bright bolts.
+        cylinder(model, .28, .065, Vector3(-.12, .86, z * 1.11), dark)
+        cylinder(model, .20, .07, Vector3(-.12, .90, z * 1.11), metal)
+        cylinder(model, .11, .075, Vector3(-.12, .94, z * 1.11), Color("cbd2d1"))
+        box(model, Vector3(.14, .04, .38), Vector3(.87, .86, z * 1.32), Color("a42b3e"))
+        cylinder(model, .045, .025, Vector3(.44, .88, z * 1.25), Color("e4cda0"))
+        cylinder(model, .045, .025, Vector3(.98, .83, z * 1.25), Color("e4cda0"))
 
 static func make_wing(model: Node3D) -> void:
     # White feathered wings, cyan armor, gold crest, and a long twin barrel.
@@ -166,8 +212,17 @@ static func make_wing(model: Node3D) -> void:
         ellipsoid(model, Vector3(.50, .23, .27), Vector3(-.55, .83, side * .54), blue)
         ellipsoid(model, Vector3(.30, .11, .21), Vector3(-.57, 1.03, side * .54), light_blue)
         plate(model, PackedVector2Array([Vector2(-.20, side * .35), Vector2(-.48, side * .40), Vector2(-.72, side * .14), Vector2(-.58, side * .10)]), 1.30, .08, gold)
+        # Feather ribs and small blue shoulder plates define the reference silhouette.
+        for i in range(4):
+            var z_rib: float = side * (.72 + i * .22)
+            var x_rib: float = -.20 - i * .14
+            plate(model, PackedVector2Array([Vector2(x_rib + .15, z_rib), Vector2(x_rib + .12, z_rib + side * .045), Vector2(x_rib - .70, z_rib + side * .40), Vector2(x_rib - .62, z_rib + side * .32)]), .76 + i * .018, .025, Color("ecfbff"))
+        plate(model, PackedVector2Array([Vector2(.27, side * .37), Vector2(.02, side * .73), Vector2(-.54, side * .83), Vector2(-.38, side * .42)]), 1.10, .10, Color("e6f7fa"))
+        ellipsoid(model, Vector3(.18, .075, .15), Vector3(-.53, 1.15, side * .51), Color("b8f0ff"))
+        box(model, Vector3(.48, .08, .10), Vector3(.64, 1.00, side * .29), white)
         cylinder(model, .13, .85, Vector3(1.09, .72, side * .14), steel, Vector3(0, 0, PI / 2.0))
         cylinder(model, .16, .18, Vector3(1.53, .72, side * .14), navy, Vector3(0, 0, PI / 2.0))
+        cylinder(model, .085, .06, Vector3(1.64, .72, side * .14), Color("162c3b"), Vector3(0, 0, PI / 2.0))
     box(model, Vector3(.75, .25, .54), Vector3(.56, .72, 0), navy)
     box(model, Vector3(.35, .12, .62), Vector3(.66, .91, 0), steel)
 

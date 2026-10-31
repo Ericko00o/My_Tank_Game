@@ -26,6 +26,8 @@ var send_timer := 0.0
 var snapshot_timer := 0.0
 var visual_positions: Dictionary = {}
 var prediction_ready := false
+var predicted_hull_angle := 0.0
+var predicted_hull_ready := false
 var mouse_down := false
 var selected_tank := "steel"
 var selected_map := "ice"
@@ -359,6 +361,7 @@ func _begin_match(data: Array, map_id: String) -> void:
     in_match = true
     visual_positions.clear()
     prediction_ready = false
+    predicted_hull_ready = false
     sim.map_id = map_id
     sim.walls = Sim.wall_rects(map_id)
     aim_mode = ""
@@ -390,6 +393,7 @@ func _return_to_menu() -> void:
     view_state.clear()
     visual_positions.clear()
     prediction_ready = false
+    predicted_hull_ready = false
     panel.show()
     hud.hide()
     instruction.hide()
@@ -451,7 +455,17 @@ func _update_camera_and_models() -> void:
         var player: Dictionary = view_state.players[peer_id]
         if not tank_models.has(peer_id):
             tank_models[peer_id] = Models3D.make_view(self, player.tank)
-        tank_models[peer_id].model.rotation.y = -float(player.aim)
+        var hull_angle := float(player.get("hull_angle", 0.0))
+        var turret_angle := float(player.aim)
+        if peer_id == local_id and not is_host:
+            if predicted_hull_ready:
+                hull_angle = predicted_hull_angle
+            # Predict local mouse aiming for responsiveness, except while the
+            # server has locked the wing's laser charge direction.
+            if player.dead <= 0.0 and player.charge <= 0.0:
+                turret_angle = float(_gather_input().angle)
+        tank_models[peer_id].hull.rotation.y = -hull_angle
+        tank_models[peer_id].turret.rotation.y = -turret_angle
     minimap.state = view_state
     minimap.local_id = local_id
     minimap.camera_center = camera.position
@@ -505,6 +519,9 @@ func _receive_snapshot(packed: PackedByteArray) -> void:
         else:
             visual_positions[local_id] = current.lerp(actual, 0.25)
         prediction_ready = true
+        if not predicted_hull_ready or player.dead > 0.0:
+            predicted_hull_angle = float(player.get("hull_angle", 0.0))
+            predicted_hull_ready = true
     sim.obstacles = data.get("obstacles", []).duplicate(true)
     view_state = data
 
@@ -519,6 +536,9 @@ func _predict_client(delta: float) -> void:
     var current: Vector2 = visual_positions.get(local_id, actual)
     if p.dead <= 0.0 and p.charge <= 0.0:
         var input := _gather_input()
+        if input.direction.length_squared() > 0.0001:
+            predicted_hull_angle = input.direction.angle()
+            predicted_hull_ready = true
         var speed: float = 270.0 if p.boost > 0.0 else (135.0 if p.tank == "steel" else 125.0)
         if p.slow > 0.0:
             speed *= 0.5

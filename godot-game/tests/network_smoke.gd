@@ -27,7 +27,7 @@ func _run() -> void:
         var other_id: int = int(game.roster[1].id)
         var original_x: float = game.sim.players[other_id].position.x
         for i in range(100):
-            if game.sim.players.has(other_id) and game.sim.players[other_id].position.x < original_x - 4.0 and game.sim.players[other_id].e_cd > 0.0:
+            if game.sim.players.has(other_id) and game.sim.players[other_id].position.x < original_x - 4.0 and game.sim.players[other_id].e_cd > 0.0 and is_equal_approx(absf(game.sim.players[other_id].hull_angle), PI) and is_zero_approx(game.sim.players[other_id].aim):
                 print("NETWORK_HOST_OK")
                 await create_timer(2.0).timeout
                 quit(0)
@@ -46,11 +46,17 @@ func _run() -> void:
             _fail("client did not receive match")
             return
         game._request_ability.rpc_id(1, "boost", Vector2.ZERO)
+        # Drive inputs explicitly so movement and aim deliberately differ.
+        game.set_process(false)
         for i in range(20):
-            game._receive_input.rpc_id(1, Vector2.LEFT, PI, false)
+            game._receive_input.rpc_id(1, Vector2.LEFT, 0.0, false)
             await create_timer(.05).timeout
         if game.view_state.players.size() != 2:
             _fail("snapshot roster missing")
+            return
+        var own: Dictionary = game.view_state.players[game.local_id]
+        if not is_equal_approx(absf(own.hull_angle), PI) or not is_zero_approx(own.aim):
+            _fail("independent hull/aim headings not synchronized")
             return
         print("NETWORK_CLIENT_OK")
         quit(0)

@@ -62,7 +62,7 @@ func setup(roster: Array, chosen_map: String) -> void:
             "id": peer_id, "name": str(entry.get("name", "Player")).substr(0, 14),
             "team": team, "tank": tank, "position": spawn_position(team, index),
             "spawn_index": index, "hp": max_hp, "max_hp": max_hp,
-            "direction": Vector2.ZERO, "aim": 0.0, "firing": false, "fire_cd": 0.0,
+            "direction": Vector2.ZERO, "aim": 0.0, "hull_angle": 0.0, "firing": false, "fire_cd": 0.0,
             "e_cd": 0.0, "ult_cd": 0.0, "boost": 0.0, "slow": 0.0,
             "dead": 0.0, "invulnerable": 1.0, "shots": 0, "charge": 0.0,
             "charge_angle": 0.0
@@ -246,6 +246,10 @@ func step(delta: float) -> void:
                 p.charge = 0.0
                 fire_laser(p)
             continue
+        # Hull orientation follows movement input independently of turret aim.
+        # Dead and charging tanks skip this update, and an idle tank keeps its heading.
+        if p.direction.length_squared() > 0.000001:
+            p.hull_angle = p.direction.angle()
         var speed: float = 270.0 if p.boost > 0.0 else (135.0 if p.tank == "steel" else 125.0)
         if p.slow > 0.0:
             speed *= 0.5
