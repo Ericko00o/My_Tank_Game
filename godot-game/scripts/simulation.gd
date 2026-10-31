@@ -1,7 +1,8 @@
 class_name ArenaSimulation
 extends RefCounted
 
-const WORLD := Vector2(1280, 720)
+const WORLD := Vector2(2560, 1440)
+const TILE_SIZE := Vector2(1280, 720)
 const STEEL_MAX := 1227.0
 const WING_MAX := 1296.0
 const BEAM_RANGE := 406.25 * 4.0 / 3.0 * 1.4
@@ -17,6 +18,7 @@ const BREAKABLE_MAPS := {
 }
 const OBSTACLE_HITS := 20
 var obstacles: Array = []
+var walls: Array = []
 var players: Dictionary = {}
 var bullets: Array = []
 var effects: Array = []
@@ -35,8 +37,11 @@ func setup(roster: Array, chosen_map: String) -> void:
     effects.clear()
     fields.clear()
     map_id = chosen_map if MAPS.has(chosen_map) else "ice"
-    for rect: Rect2 in BREAKABLE_MAPS[map_id]:
-        obstacles.append({"rect": rect, "hits": OBSTACLE_HITS})
+    walls = wall_rects(map_id)
+    for y in range(2):
+        for x in range(2):
+            for rect: Rect2 in BREAKABLE_MAPS[map_id]:
+                obstacles.append({"rect": Rect2(rect.position + Vector2(x * TILE_SIZE.x, y * TILE_SIZE.y), rect.size), "hits": OBSTACLE_HITS})
     time_left = 180.0
     score = [0, 0]
     running = true
@@ -64,12 +69,20 @@ func setup(roster: Array, chosen_map: String) -> void:
         }
 
 func spawn_position(team: int, index: int) -> Vector2:
-    return Vector2(120.0 if team == 0 else 1160.0, 250.0 + 220.0 * index)
+    return Vector2(120.0 if team == 0 else WORLD.x - 120.0, 580.0 + 220.0 * index)
+
+static func wall_rects(chosen_map: String) -> Array:
+    var result: Array = []
+    for y in range(2):
+        for x in range(2):
+            for rect: Rect2 in MAPS.get(chosen_map, MAPS["ice"]):
+                result.append(Rect2(rect.position + Vector2(x * TILE_SIZE.x, y * TILE_SIZE.y), rect.size))
+    return result
 
 func blocked(pos: Vector2, radius: float = 18.0) -> bool:
     if pos.x < radius or pos.y < radius or pos.x > WORLD.x - radius or pos.y > WORLD.y - radius:
         return true
-    for obstacle: Rect2 in MAPS[map_id]:
+    for obstacle: Rect2 in walls:
         if obstacle.grow(radius).has_point(pos):
             return true
     for obstacle in obstacles:

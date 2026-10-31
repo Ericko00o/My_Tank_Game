@@ -1,6 +1,8 @@
 extends Node2D
 
 const Sim = preload("res://scripts/simulation.gd")
+const Models3D = preload("res://scripts/models_3d.gd")
+const Minimap = preload("res://scripts/minimap.gd")
 const STEEL_TEXTURE = preload("res://assets/steel.png")
 const WING_TEXTURE = preload("res://assets/wing.png")
 const ICE_FLOOR = preload("res://assets/ice_floor.png")
@@ -27,6 +29,12 @@ var prediction_ready := false
 var mouse_down := false
 var selected_tank := "steel"
 var selected_map := "ice"
+var camera: Camera2D
+var minimap: Control
+var tank_models: Dictionary = {}
+var block_models: Dictionary = {}
+var hud_background: ColorRect
+var instruction_background: ColorRect
 
 var ui: CanvasLayer
 var panel: PanelContainer
@@ -46,6 +54,11 @@ var instruction: Label
 var exit_button: Button
 
 func _ready() -> void:
+    camera = Camera2D.new()
+    camera.enabled = false
+    add_child(camera)
+    for kind in ["ice", "jungle", "breakable"]:
+        block_models[kind] = Models3D.make_view(self, kind)
     _build_ui()
     multiplayer.peer_connected.connect(_on_peer_connected)
     multiplayer.peer_disconnected.connect(_on_peer_disconnected)
@@ -57,6 +70,25 @@ func _ready() -> void:
 func _build_ui() -> void:
     ui = CanvasLayer.new()
     add_child(ui)
+    hud_background = ColorRect.new()
+    hud_background.position = Vector2(402, 5)
+    hud_background.size = Vector2(476, 48)
+    hud_background.color = Color(0.04, 0.12, 0.18, 0.76)
+    hud_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    ui.add_child(hud_background)
+    hud_background.hide()
+    instruction_background = ColorRect.new()
+    instruction_background.position = Vector2(225, 655)
+    instruction_background.size = Vector2(830, 50)
+    instruction_background.color = Color(0.04, 0.12, 0.18, 0.76)
+    instruction_background.mouse_filter = Control.MOUSE_FILTER_IGNORE
+    ui.add_child(instruction_background)
+    instruction_background.hide()
+    minimap = Minimap.new()
+    minimap.position = Vector2(18, 18)
+    minimap.size = Vector2(224, 126)
+    ui.add_child(minimap)
+    minimap.hide()
     panel = PanelContainer.new()
     panel.position = Vector2(385, 56)
     panel.size = Vector2(510, 604)
@@ -328,14 +360,21 @@ func _begin_match(data: Array, map_id: String) -> void:
     visual_positions.clear()
     prediction_ready = false
     sim.map_id = map_id
+    sim.walls = Sim.wall_rects(map_id)
     aim_mode = ""
     mouse_down = false
     panel.hide()
     hud.show()
     instruction.show()
     exit_button.show()
+    hud_background.show()
+    instruction_background.show()
+    minimap.show()
+    camera.enabled = true
     if is_host:
         sim.setup(data, map_id)
+        if practice and sim.players.has(-1):
+            sim.players[-1].position = sim.players[1].position + Vector2(600, 0)
         view_state = sim.snapshot()
     else:
         view_state = {}
@@ -355,6 +394,13 @@ func _return_to_menu() -> void:
     hud.hide()
     instruction.hide()
     exit_button.hide()
+    hud_background.hide()
+    instruction_background.hide()
+    minimap.hide()
+    camera.enabled = false
+    for model in tank_models.values():
+        model.viewport.queue_free()
+    tank_models.clear()
     roster_label.text = "尚未建立房間"
     queue_redraw()
 
@@ -392,8 +438,24 @@ func _process(delta: float) -> void:
             send_timer = 0.0
             var input := _gather_input()
             _receive_input.rpc_id(1, input.direction, input.angle, input.firing)
+    _update_camera_and_models()
     _update_hud()
     queue_redraw()
+
+func _update_camera_and_models() -> void:
+    var local := _local_player()
+    if not local.is_empty():
+        var center: Vector2 = visual_positions.get(local_id, local.position) if not is_host else local.position
+        camera.position = Vector2(clampf(center.x, 640.0, Sim.WORLD.x - 640.0), clampf(center.y, 360.0, Sim.WORLD.y - 360.0))
+    for peer_id in view_state.get("players", {}):
+        var player: Dictionary = view_state.players[peer_id]
+        if not tank_models.has(peer_id):
+            tank_models[peer_id] = Models3D.make_view(self, player.tank)
+        tank_models[peer_id].model.rotation.y = -float(player.aim)
+    minimap.state = view_state
+    minimap.local_id = local_id
+    minimap.camera_center = camera.position
+    minimap.queue_redraw()
 
 func _gather_input() -> Dictionary:
     var direction := Vector2(
@@ -539,31 +601,25 @@ func _draw() -> void:
     var map_id := str(view_state.get("map_id", selected_map))
     var jungle := map_id == "jungle"
     var floor_texture: Texture2D = JUNGLE_FLOOR if jungle else ICE_FLOOR
-    draw_texture_rect(floor_texture, Rect2(Vector2.ZERO, Sim.WORLD), false)
+    for y in range(2):
+        for x in range(2):
+            draw_texture_rect(floor_texture, Rect2(Vector2(x * Sim.TILE_SIZE.x, y * Sim.TILE_SIZE.y), Sim.TILE_SIZE), false)
     draw_rect(Rect2(Vector2.ZERO, Sim.WORLD), Color(0.04, 0.10, 0.12, 0.16))
-    for i in range(90):
-        var point := Vector2((i * 191 + 13) % 1280, (i * 137 + 49) % 720)
+    for i in range(360):
+        var point := Vector2((i * 191 + 13) % int(Sim.WORLD.x), (i * 137 + 49) % int(Sim.WORLD.y))
         var color := Color(0.55, 0.76, 0.4, 0.20) if jungle else Color(0.8, 0.95, 1.0, 0.26)
         draw_circle(point, 2.0 + i % 3, color)
-    for obstacle: Rect2 in Sim.MAPS.get(map_id, Sim.MAPS["ice"]):
-        var top_color := Color("aab393") if jungle else Color("d2eef1")
-        var side_color := Color("58715a") if jungle else Color("5b9bb8")
-        draw_rect(Rect2(obstacle.position + Vector2(5, 8), obstacle.size), Color(0.05, 0.11, 0.15, 0.45))
-        draw_rect(obstacle, side_color)
-        draw_rect(Rect2(obstacle.position, obstacle.size - Vector2(0, 8)), top_color)
-        draw_rect(Rect2(obstacle.position + Vector2(3, 3), obstacle.size - Vector2(6, 14)), Color(1, 1, 1, 0.22), false, 2.0)
-        if jungle:
-            for x in range(14, int(obstacle.size.x), 30):
-                draw_line(obstacle.position + Vector2(x, 4), obstacle.position + Vector2(x - 5, 24), Color("71945e"), 3.0)
-        else:
-            for x in range(15, int(obstacle.size.x), 32):
-                draw_circle(obstacle.position + Vector2(x, 3), 5.0, Color("f8ffff"))
+    for obstacle: Rect2 in Sim.wall_rects(map_id):
+        draw_rect(Rect2(obstacle.position + Vector2(5, 8), obstacle.size), Color(0.05, 0.11, 0.15, 0.32))
+        var block_texture: Texture2D = block_models["jungle" if jungle else "ice"].viewport.get_texture()
+        draw_texture_rect(block_texture, Rect2(obstacle.position - obstacle.size * Vector2(.4, .5), obstacle.size * Vector2(1.8, 1.9)), false)
     if in_match:
         for obstacle in view_state.get("obstacles", []):
             if obstacle.hits <= 0:
                 continue
             var rect: Rect2 = obstacle.rect
-            draw_texture_rect(ICE_BLOCK, rect, false, Color("a8d59b") if jungle else Color.WHITE)
+            var texture: Texture2D = block_models["breakable"].viewport.get_texture()
+            draw_texture_rect(texture, Rect2(rect.position - rect.size * Vector2(.18, .5), rect.size * Vector2(1.36, 1.9)), false, Color("a8d59b") if jungle else Color.WHITE)
             draw_rect(Rect2(rect.position + Vector2(3, -8), Vector2(rect.size.x - 6, 4)), Color(0.04, 0.12, 0.18, 0.8))
             draw_rect(Rect2(rect.position + Vector2(3, -8), Vector2((rect.size.x - 6) * float(obstacle.hits) / Sim.OBSTACLE_HITS, 4)), Color("9defff"))
     for team in [0, 1]:
@@ -602,22 +658,17 @@ func _draw() -> void:
             visual_player.position = visual_positions.get(peer_id, player.position)
         _draw_tank(visual_player)
     _draw_aim()
-    draw_rect(Rect2(402, 5, 476, 48), Color(0.04, 0.12, 0.18, 0.76))
-    draw_rect(Rect2(225, 655, 830, 50), Color(0.04, 0.12, 0.18, 0.76))
 
 func _draw_tank(player: Dictionary) -> void:
     var pos: Vector2 = player.position
-    # Layered offset silhouettes give the sprite height without changing hitboxes.
-    draw_set_transform(pos, float(player.aim), Vector2.ONE)
     var steel: bool = player.tank == "steel"
     var team_color := Color("65d8f4") if player.team == 0 else Color("ff8f78")
-    var texture: Texture2D = STEEL_TEXTURE if steel else WING_TEXTURE
-    draw_texture_rect(texture, Rect2(-62, -35, 124, 82), false, Color(0.03, 0.07, 0.1, 0.34))
-    draw_texture_rect(texture, Rect2(-62, -40, 124, 82), false, Color(0.35, 0.43, 0.49, 0.65))
-    draw_texture_rect(texture, Rect2(-62, -43, 124, 82), false)
+    draw_circle(pos + Vector2(4, 9), 25.0, Color(0, 0, 0, 0.22))
+    if tank_models.has(player.id):
+        var texture: Texture2D = tank_models[player.id].viewport.get_texture()
+        draw_texture_rect(texture, Rect2(pos + Vector2(-76, -70), Vector2(152, 126)), false)
     if steel and player.boost > 0.0:
-        draw_arc(Vector2.ZERO, 35.0, 0.0, TAU, 36, Color("ff5151"), 4.0, true)
-    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+        draw_arc(pos, 35.0, 0.0, TAU, 36, Color("ff5151"), 4.0, true)
     if player.invulnerable > 0.0:
         draw_arc(pos, 29.0, 0.0, TAU, 32, Color("b4f9ff"), 2.0, true)
     if player.charge > 0.0:
