@@ -7,6 +7,11 @@ var camera_center := Vector2.ZERO
 func _ready() -> void:
     mouse_filter = Control.MOUSE_FILTER_IGNORE
 
+static func is_player_visible(player: Dictionary, viewer: Dictionary) -> bool:
+    if float(player.get("dead", 0.0)) > 0.0:
+        return false
+    return viewer.is_empty() or player.team == viewer.team or float(player.get("invisible", 0.0)) <= 0.0
+
 func _draw() -> void:
     if state.is_empty():
         return
@@ -24,6 +29,8 @@ func _draw() -> void:
     draw_rect(Rect2(camera_center * scale_xy - view_size / 2.0, view_size), Color(1, 1, 1, .35), false, 1.0)
     for id in state.get("players", {}):
         var p: Dictionary = state.players[id]
-        if p.dead <= 0.0:
-            var color := Color("fff7a5") if id == local_id else (Color("58d8ff") if p.team == 0 else Color("ff6a5e"))
-            draw_circle(p.position * scale_xy, 4.0 if id == local_id else 3.0, color)
+        var own: Dictionary = state.players.get(local_id, {})
+        if not is_player_visible(p, own):
+            continue
+        var color := Color("fff7a5") if id == local_id else (Color("58d8ff") if p.team == 0 else Color("ff6a5e"))
+        draw_circle(p.position * scale_xy, 4.0 if id == local_id else 3.0, color)

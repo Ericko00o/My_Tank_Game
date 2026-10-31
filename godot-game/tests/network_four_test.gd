@@ -33,9 +33,8 @@ func _run() -> void:
                     ready = false
                     break
                 var p: Dictionary = game.sim.players[entry.id]
-                if p.position.y >= 245.0 and p.spawn_index == 0:
-                    ready = false
-                if p.position.y >= 465.0 and p.spawn_index == 1:
+                var spawn: Vector2 = game.sim.spawn_position(p.team, p.spawn_index)
+                if p.position.y >= spawn.y - 5.0:
                     ready = false
                 if p.e_cd <= 0.0:
                     ready = false
