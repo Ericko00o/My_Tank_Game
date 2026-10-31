@@ -11,6 +11,12 @@ const MAPS := {
     "jungle": [Rect2(280, 110, 115, 100), Rect2(885, 110, 115, 100), Rect2(350, 300, 120, 75), Rect2(810, 300, 120, 75), Rect2(585, 260, 110, 90), Rect2(280, 510, 115, 100), Rect2(885, 510, 115, 100)]
 }
 
+const BREAKABLE_MAPS := {
+    "ice": [Rect2(195, 330, 56, 56), Rect2(1029, 330, 56, 56), Rect2(612, 120, 56, 56), Rect2(612, 544, 56, 56)],
+    "jungle": [Rect2(195, 330, 56, 56), Rect2(1029, 330, 56, 56), Rect2(525, 480, 56, 56), Rect2(699, 180, 56, 56)]
+}
+const OBSTACLE_HITS := 20
+var obstacles: Array = []
 var players: Dictionary = {}
 var bullets: Array = []
 var effects: Array = []
@@ -24,10 +30,13 @@ var id_counter := 0
 
 func setup(roster: Array, chosen_map: String) -> void:
     players.clear()
+    obstacles.clear()
     bullets.clear()
     effects.clear()
     fields.clear()
     map_id = chosen_map if MAPS.has(chosen_map) else "ice"
+    for rect: Rect2 in BREAKABLE_MAPS[map_id]:
+        obstacles.append({"rect": rect, "hits": OBSTACLE_HITS})
     time_left = 180.0
     score = [0, 0]
     running = true
@@ -63,7 +72,22 @@ func blocked(pos: Vector2, radius: float = 18.0) -> bool:
     for obstacle: Rect2 in MAPS[map_id]:
         if obstacle.grow(radius).has_point(pos):
             return true
+    for obstacle in obstacles:
+        if obstacle.hits > 0 and obstacle.rect.grow(radius).has_point(pos):
+            return true
     return false
+
+func obstacle_at(pos: Vector2, radius: float = 2.0) -> int:
+    for i in range(obstacles.size()):
+        if obstacles[i].hits > 0 and obstacles[i].rect.grow(radius).has_point(pos):
+            return i
+    return -1
+
+func damage_obstacle(index: int) -> void:
+    if index < 0 or index >= obstacles.size() or obstacles[index].hits <= 0:
+        return
+    obstacles[index].hits -= 1
+    effects.append({"kind": "ice_hit", "position": obstacles[index].rect.get_center(), "life": 0.25})
 
 func segment_blocked(from: Vector2, to: Vector2) -> bool:
     var length := from.distance_to(to)
@@ -96,8 +120,10 @@ func use_ability(peer_id: int, action: String, target: Vector2) -> bool:
     if action == "missile" and p.tank == "wing" and p.e_cd <= 0.0:
         if p.position.distance_to(target) > CAST_RANGE:
             return false
-        var target_id := -1
-        var closest := 30.0
+        var target_id := 0
+        var found := false
+        var target_obstacle := -1
+        var closest := 36.0
         for other_id in players:
             var other: Dictionary = players[other_id]
             if other.team == p.team or other.dead > 0.0:
@@ -106,10 +132,13 @@ func use_ability(peer_id: int, action: String, target: Vector2) -> bool:
             if dist < closest and p.position.distance_to(other.position) <= CAST_RANGE:
                 closest = dist
                 target_id = other_id
-        if target_id < 0:
+                found = true
+        if not found:
+            target_obstacle = obstacle_at(target, 8.0)
+        if not found and target_obstacle < 0:
             return false
         for i in range(3):
-            fields.append({"kind": "missile_pending", "owner": peer_id, "target_id": target_id, "delay": i * 0.18})
+            fields.append({"kind": "missile_pending", "owner": peer_id, "target_id": target_id, "target_obstacle": target_obstacle, "delay": i * 0.18})
         p.e_cd = 8.0
         return true
     if action == "ultimate" and p.ult_cd <= 0.0:
@@ -164,6 +193,9 @@ func fire_laser(p: Dictionary) -> void:
     while d < BEAM_RANGE:
         if blocked(origin + dir * d, 2.0):
             distance = d
+            var obstacle_index := obstacle_at(origin + dir * d)
+            if obstacle_index >= 0:
+                damage_obstacle(obstacle_index)
             break
         d += 5.0
     effects.append({"kind": "laser", "position": origin, "angle": p.charge_angle, "length": distance, "life": 0.3})
@@ -219,12 +251,20 @@ func step(delta: float) -> void:
         if field.kind == "missile_pending":
             field.delay -= dt
             if field.delay <= 0.0:
-                if owner.dead <= 0.0 and players.has(field.target_id) and players[field.target_id].dead <= 0.0:
-                    var to_target: Vector2 = (players[field.target_id].position - owner.position).normalized()
+                var target_position := Vector2.ZERO
+                var valid_target := false
+                if field.target_obstacle >= 0 and field.target_obstacle < obstacles.size() and obstacles[field.target_obstacle].hits > 0:
+                    target_position = obstacles[field.target_obstacle].rect.get_center()
+                    valid_target = true
+                elif field.target_obstacle < 0 and players.has(field.target_id) and players[field.target_id].dead <= 0.0:
+                    target_position = players[field.target_id].position
+                    valid_target = true
+                if owner.dead <= 0.0 and valid_target:
+                    var to_target: Vector2 = (target_position - owner.position).normalized()
                     id_counter += 1
                     bullets.append({"id": id_counter, "owner": field.owner, "position": owner.position + to_target * 25.0,
                         "velocity": to_target * 350.0, "remaining": 1400.0, "damage": 240.0,
-                        "pierce": false, "hits": [], "kind": "missile", "target_id": field.target_id})
+                        "pierce": false, "hits": [], "kind": "missile", "target_id": field.target_id, "target_obstacle": field.target_obstacle})
                 field["remove"] = true
         elif field.kind == "bombard":
             field.tick -= dt
@@ -246,15 +286,36 @@ func step(delta: float) -> void:
             continue
         var owner: Dictionary = players[bullet.owner]
         if bullet.kind == "missile":
-            if not players.has(bullet.target_id) or players[bullet.target_id].dead > 0.0:
+            var missile_target := Vector2.ZERO
+            if bullet.target_obstacle >= 0:
+                if obstacles[bullet.target_obstacle].hits <= 0:
+                    bullet["remove"] = true
+                    continue
+                missile_target = obstacles[bullet.target_obstacle].rect.get_center()
+            elif players.has(bullet.target_id) and players[bullet.target_id].dead <= 0.0:
+                missile_target = players[bullet.target_id].position
+            else:
                 bullet["remove"] = true
                 continue
-            bullet.velocity = (players[bullet.target_id].position - bullet.position).normalized() * 350.0
+            bullet.velocity = (missile_target - bullet.position).normalized() * 350.0
         var previous: Vector2 = bullet.position
         var travel: Vector2 = bullet.velocity * dt
         bullet.position += travel
         bullet.remaining -= travel.length()
-        if bullet.remaining <= 0.0 or (not bullet.pierce and segment_blocked(previous, bullet.position)):
+        if not bullet.has("obstacle_hits"):
+            bullet["obstacle_hits"] = []
+        var steps := maxi(1, ceili(travel.length() / 4.0))
+        for i in range(1, steps + 1):
+            var point := previous.lerp(bullet.position, float(i) / steps)
+            var obstacle_index := obstacle_at(point)
+            var was_blocked := blocked(point, 2.0)
+            if obstacle_index >= 0 and obstacle_index not in bullet.obstacle_hits:
+                bullet.obstacle_hits.append(obstacle_index)
+                damage_obstacle(obstacle_index)
+            if not bullet.pierce and was_blocked:
+                bullet["remove"] = true
+                break
+        if bullet.remaining <= 0.0 or bullet.get("remove", false):
             bullet["remove"] = true
             continue
         for other_id in players:
@@ -279,4 +340,4 @@ func step(delta: float) -> void:
 
 func snapshot() -> Dictionary:
     return {"players": players.duplicate(true), "bullets": bullets.duplicate(true), "effects": effects.duplicate(true),
-        "fields": fields.duplicate(true), "map_id": map_id, "time_left": time_left, "score": score.duplicate(), "round_over": round_over}
+        "fields": fields.duplicate(true), "obstacles": obstacles.duplicate(true), "map_id": map_id, "time_left": time_left, "score": score.duplicate(), "round_over": round_over}

@@ -5,6 +5,7 @@ const STEEL_TEXTURE = preload("res://assets/steel.png")
 const WING_TEXTURE = preload("res://assets/wing.png")
 const ICE_FLOOR = preload("res://assets/ice_floor.png")
 const JUNGLE_FLOOR = preload("res://assets/jungle_floor.png")
+const ICE_BLOCK = preload("res://assets/ice_block.svg")
 const PORT := 23456
 const MAX_PLAYERS := 4
 const SEND_INTERVAL := 0.05
@@ -441,6 +442,7 @@ func _receive_snapshot(packed: PackedByteArray) -> void:
         else:
             visual_positions[local_id] = current.lerp(actual, 0.25)
         prediction_ready = true
+    sim.obstacles = data.get("obstacles", []).duplicate(true)
     view_state = data
 
 func _predict_client(delta: float) -> void:
@@ -555,6 +557,14 @@ func _draw() -> void:
         else:
             for x in range(15, int(obstacle.size.x), 32):
                 draw_circle(obstacle.position + Vector2(x, 3), 5.0, Color("f8ffff"))
+    if in_match:
+        for obstacle in view_state.get("obstacles", []):
+            if obstacle.hits <= 0:
+                continue
+            var rect: Rect2 = obstacle.rect
+            draw_texture_rect(ICE_BLOCK, rect, false, Color("a8d59b") if jungle else Color.WHITE)
+            draw_rect(Rect2(rect.position + Vector2(3, -8), Vector2(rect.size.x - 6, 4)), Color(0.04, 0.12, 0.18, 0.8))
+            draw_rect(Rect2(rect.position + Vector2(3, -8), Vector2((rect.size.x - 6) * float(obstacle.hits) / Sim.OBSTACLE_HITS, 4)), Color("9defff"))
     for team in [0, 1]:
         var spawn := Sim.new().spawn_position(team, 0)
         draw_arc(spawn, 75.0, 0.0, TAU, 48, Color("87e8f7") if team == 0 else Color("fa8a76"), 2.0, true)
@@ -590,6 +600,8 @@ func _draw() -> void:
             draw_circle(position, 30.0 * float(effect.life) / 0.5, Color(1, .5, .15, .7))
         elif effect.kind == "hit":
             draw_arc(position, 25.0, 0.0, TAU, 20, Color("fff3b2"), 3.0, true)
+        elif effect.kind == "ice_hit":
+            draw_arc(position, 24.0, 0.0, TAU, 20, Color("c3faff"), 3.0, true)
     for peer_id in view_state.players:
         var player: Dictionary = view_state.players[peer_id]
         if player.dead > 0.0:
@@ -637,6 +649,10 @@ func _draw_aim() -> void:
         draw_arc(p.position, Sim.CAST_RANGE, 0.0, TAU, 100, Color(0.8, 1, 1, 0.55), 2.0, true)
         var radius := 20.0 if aim_mode == "missile" else 100.0
         draw_arc(pointer, radius, 0.0, TAU, 48, color, 3.0, true)
+        if aim_mode == "missile":
+            for direction in [Vector2.RIGHT, Vector2.LEFT, Vector2.UP, Vector2.DOWN]:
+                draw_line(pointer + direction * 12.0, pointer + direction * 27.0, color, 3.0, true)
+            draw_circle(pointer, 2.5, color)
     else:
         var angle: float = p.position.angle_to_point(pointer)
         var dir := Vector2.RIGHT.rotated(angle)
