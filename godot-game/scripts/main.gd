@@ -6,6 +6,7 @@ const WING_TEXTURE = preload("res://assets/wing.png")
 const ICE_FLOOR = preload("res://assets/ice_floor.png")
 const JUNGLE_FLOOR = preload("res://assets/jungle_floor.png")
 const ICE_BLOCK = preload("res://assets/ice_block.svg")
+const MISSILE_TEXTURE = preload("res://assets/missile.svg")
 const PORT := 23456
 const MAX_PLAYERS := 4
 const SEND_INTERVAL := 0.05
@@ -573,29 +574,19 @@ func _draw() -> void:
     for field in view_state.get("fields", []):
         if field.kind == "bombard":
             var center: Vector2 = field.position
-            draw_circle(center, 100.0, Color(1.0, 0.28, 0.06, 0.17))
-            draw_arc(center, 100.0, 0.0, TAU, 64, Color("ffd27b"), 3.0, true)
-            var phase := float(Time.get_ticks_msec() % 500) / 500.0
-            for i in range(5):
-                var offset := Vector2.from_angle(float(i) * TAU / 5.0 + phase) * (25.0 + 35.0 * phase)
-                draw_line(center + offset + Vector2(-8, -20), center + offset, Color("ffe8a4"), 3.0, true)
-                draw_circle(center + offset, 4.0, Color("ff914a"))
+            _draw_bombardment(center, 3.0 - float(field.life))
     for bullet in view_state.get("bullets", []):
         var position: Vector2 = bullet.position
         var direction: Vector2 = bullet.velocity.normalized()
         if bullet.kind == "missile":
-            draw_line(position - direction * 20.0, position, Color("ffbc5d"), 5.0, true)
-            draw_colored_polygon(PackedVector2Array([position + direction * 10.0, position - direction * 7.0 + direction.orthogonal() * 5.0, position - direction * 7.0 - direction.orthogonal() * 5.0]), Color("f6eee1"))
+            _draw_missile(position, direction)
         else:
             var tint := Color("ffe174") if bullet.pierce else (Color("ff6c6c") if view_state.players[bullet.owner].tank == "steel" else Color("e5fbff"))
             draw_line(position - direction * (35.0 if bullet.pierce else 15.0), position + direction * 7.0, tint, 6.0 if bullet.pierce else 4.0, true)
     for effect in view_state.get("effects", []):
         var position: Vector2 = effect.position
         if effect.kind == "laser":
-            var end := position + Vector2.RIGHT.rotated(effect.angle) * float(effect.length)
-            draw_line(position, end, Color(0.14, 0.91, 1, 0.35), 58.0, true)
-            draw_line(position, end, Color("89f9ff"), 26.0, true)
-            draw_line(position, end, Color.WHITE, 8.0, true)
+            _draw_laser(position, effect)
         elif effect.kind == "explosion":
             draw_circle(position, 30.0 * float(effect.life) / 0.5, Color(1, .5, .15, .7))
         elif effect.kind == "hit":
@@ -616,12 +607,14 @@ func _draw() -> void:
 
 func _draw_tank(player: Dictionary) -> void:
     var pos: Vector2 = player.position
-    draw_circle(pos + Vector2(3, 5), 23.0, Color(0, 0, 0, 0.28))
+    # Layered offset silhouettes give the sprite height without changing hitboxes.
     draw_set_transform(pos, float(player.aim), Vector2.ONE)
     var steel: bool = player.tank == "steel"
     var team_color := Color("65d8f4") if player.team == 0 else Color("ff8f78")
     var texture: Texture2D = STEEL_TEXTURE if steel else WING_TEXTURE
-    draw_texture_rect(texture, Rect2(-48, -32, 96, 64), false)
+    draw_texture_rect(texture, Rect2(-62, -35, 124, 82), false, Color(0.03, 0.07, 0.1, 0.34))
+    draw_texture_rect(texture, Rect2(-62, -40, 124, 82), false, Color(0.35, 0.43, 0.49, 0.65))
+    draw_texture_rect(texture, Rect2(-62, -43, 124, 82), false)
     if steel and player.boost > 0.0:
         draw_arc(Vector2.ZERO, 35.0, 0.0, TAU, 36, Color("ff5151"), 4.0, true)
     draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
@@ -629,10 +622,65 @@ func _draw_tank(player: Dictionary) -> void:
         draw_arc(pos, 29.0, 0.0, TAU, 32, Color("b4f9ff"), 2.0, true)
     if player.charge > 0.0:
         var dir := Vector2.RIGHT.rotated(player.charge_angle)
-        draw_line(pos, pos + dir * Sim.BEAM_RANGE, Color(0.72, 0.95, 1.0, 0.55), 3.0, true)
-    draw_rect(Rect2(pos + Vector2(-24, -38), Vector2(48, 6)), Color("172c36"))
-    draw_rect(Rect2(pos + Vector2(-24, -38), Vector2(48 * maxf(0.0, player.hp / player.max_hp), 6)), Color("8ce89e"))
-    draw_string(ThemeDB.fallback_font, pos + Vector2(-28, -46), str(player.name), HORIZONTAL_ALIGNMENT_CENTER, 56, 12, team_color)
+        draw_line(pos, pos + dir * Sim.BEAM_RANGE, Color(0.72, 0.95, 1.0, 0.35), 2.0, true)
+        _draw_charge_orb(pos + dir * 43.0, clampf(1.0 - float(player.charge), 0.0, 1.0))
+    draw_rect(Rect2(pos + Vector2(-27, -53), Vector2(54, 6)), Color("172c36"))
+    draw_rect(Rect2(pos + Vector2(-27, -53), Vector2(54 * maxf(0.0, player.hp / player.max_hp), 6)), Color("8ce89e"))
+    draw_string(ThemeDB.fallback_font, pos + Vector2(-32, -61), str(player.name), HORIZONTAL_ALIGNMENT_CENTER, 64, 12, team_color)
+
+func _draw_missile(pos: Vector2, direction: Vector2) -> void:
+    var tail := pos - direction * 13.0
+    draw_line(tail - direction * 17.0, tail, Color(1.0, 0.29, 0.06, 0.30), 10.0, true)
+    draw_line(tail - direction * 13.0, tail, Color("ffba58"), 5.0, true)
+    draw_line(tail - direction * 8.0, tail, Color("fff9c4"), 2.0, true)
+    draw_set_transform(pos, direction.angle(), Vector2.ONE)
+    draw_texture_rect(MISSILE_TEXTURE, Rect2(-17, -8, 34, 16), false)
+    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+func _draw_charge_orb(pos: Vector2, progress: float) -> void:
+    var radius := 6.0 + progress * 16.0
+    draw_circle(pos, radius * 1.75, Color(0.08, 0.55, 1.0, 0.12))
+    draw_circle(pos, radius * 1.3, Color(0.08, 0.7, 1.0, 0.22))
+    draw_circle(pos, radius, Color(0.22, 0.78, 1.0, 0.65))
+    draw_circle(pos, radius * 0.65, Color(0.65, 0.95, 1.0, 0.9))
+    draw_circle(pos, radius * 0.3, Color.WHITE)
+    draw_arc(pos, radius * 1.14, 0.0, TAU, 32, Color(0.65, 0.95, 1.0, 0.7), 2.0, true)
+
+func _draw_laser(origin: Vector2, effect: Dictionary) -> void:
+    var dir := Vector2.RIGHT.rotated(float(effect.angle))
+    var length := float(effect.length)
+    var start := origin + dir * minf(43.0, length * 0.4)
+    var end := origin + dir * length
+    var fade := clampf(float(effect.life) / 0.12, 0.0, 1.0)
+    draw_line(start, end, Color(0.04, 0.43, 1.0, 0.17 * fade), 82.0, true)
+    draw_line(start, end, Color(0.05, 0.59, 1.0, 0.30 * fade), 66.0, true)
+    draw_line(start, end, Color(0.12, 0.76, 1.0, 0.55 * fade), 48.0, true)
+    draw_line(start, end, Color(0.50, 0.93, 1.0, 0.85 * fade), 31.0, true)
+    draw_line(start, end, Color(0.88, 1.0, 1.0, fade), 17.0, true)
+    draw_line(start, end, Color(1.0, 1.0, 1.0, fade), 7.0, true)
+    _draw_charge_orb(start, 1.0)
+
+func _draw_bombardment(center: Vector2, elapsed: float) -> void:
+    draw_circle(center, 100.0, Color(1.0, 0.25, 0.04, 0.13))
+    draw_arc(center, 100.0, 0.0, TAU, 64, Color("ffd27b"), 3.0, true)
+    # Deterministic local animation, derived from the server field lifetime.
+    for i in range(7):
+        var phase := fposmod(elapsed / 0.78 + float(i) * 0.173, 1.0)
+        var impact := center + Vector2.from_angle(float(i) * 2.399) * (26.0 + float(i % 3) * 26.0)
+        if phase < 0.58:
+            var progress := phase / 0.58
+            var missile_pos := impact + Vector2(-32, -115) * (1.0 - progress)
+            var direction := Vector2(32, 115).normalized()
+            draw_line(missile_pos - direction * 24.0, missile_pos, Color(1.0, 0.48, 0.13, 0.42), 7.0, true)
+            _draw_missile(missile_pos, direction)
+        else:
+            var blast := (phase - 0.58) / 0.42
+            var size := 8.0 + 21.0 * blast
+            var alpha := 1.0 - blast
+            draw_circle(impact, size * 1.5, Color(1.0, 0.25, 0.04, 0.19 * alpha))
+            draw_circle(impact, size, Color(1.0, 0.42, 0.06, 0.65 * alpha))
+            draw_circle(impact, size * 0.58, Color(1.0, 0.86, 0.35, 0.8 * alpha))
+            draw_arc(impact, size * 1.25, 0.0, TAU, 24, Color(1.0, 0.79, 0.35, 0.7 * alpha), 2.0, true)
 
 func _draw_aim() -> void:
     if aim_mode.is_empty():
