@@ -1,5 +1,9 @@
 ﻿# 我的坦克：新時代戰場
 
+## Godot 桌面版
+
+新增的 Godot 版本位於 [godot-game](godot-game/README.md)，提供鋼鐵、飛翼、兩張地圖與區域網路 1v1 / 2v2。原本的網頁版本仍保留於此儲存庫。Windows 本機執行檔位於 `godot-game/build/TankArena.exe`；匯出檔不納入 Git，重新取得方式請見 Godot 版說明。
+
 ## 單人練習
 直接以瀏覽器開啟 index.html，選擇地圖與坦克後按「單人練習」。
 
