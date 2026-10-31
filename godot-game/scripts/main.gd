@@ -1,6 +1,8 @@
 extends Node2D
 
 const Sim = preload("res://scripts/simulation.gd")
+const ProjectileFX = preload("res://scripts/projectile_fx.gd")
+const ZoneFX = preload("res://scripts/zone_fx.gd")
 const Minimap = preload("res://scripts/minimap.gd")
 const STEEL_TEXTURE = preload("res://assets/steel.png")
 const WING_TEXTURE = preload("res://assets/wing.png")
@@ -13,7 +15,7 @@ const MAX_PLAYERS := 4
 const SEND_INTERVAL := 0.05
 const TANK_IDS := ["steel", "wing", "ghost", "dark", "elf"]
 const TANK_NAMES := {"steel": "鋼鐵", "wing": "飛翼", "ghost": "惡靈", "dark": "黑暗騎士", "elf": "精靈王子"}
-const SPRITE_PATHS := {"steel": "res://assets/tank_steel.png", "wing": "res://assets/tank_wing.png", "ghost": "res://assets/tank_ghost.png", "dark": "res://assets/tank_dark.png", "elf": "res://assets/tank_elf.png"}
+const SPRITE_PATHS := {"steel": "res://assets/steel.png", "wing": "res://assets/tank_wing.png", "ghost": "res://assets/tank_ghost.png", "dark": "res://assets/tank_dark.png", "elf": "res://assets/tank_elf.png"}
 
 var sim = Sim.new()
 var view_state: Dictionary = {}
@@ -734,7 +736,10 @@ func _draw_tank(player: Dictionary) -> void:
     draw_set_transform(pos, angles.turret, Vector2.ONE)
     var texture: Texture2D = tank_sprites.get(player.tank, STEEL_TEXTURE if steel else WING_TEXTURE)
     # Artwork faces right; Sim.muzzle_offset stores each silhouette's tip.
-    draw_texture_rect(texture, Rect2(-50, -43, 100, 86), false, Color(1, 1, 1, opacity))
+    # The earlier steel art has a longer barrel; position its tip at the
+    # existing steel muzzle without changing attack range or collision rules.
+    var sprite_rect := Rect2(-60, -43, 100, 86) if steel else Rect2(-50, -43, 100, 86)
+    draw_texture_rect(texture, sprite_rect, false, Color(1, 1, 1, opacity))
     draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
     if steel and player.boost > 0.0:
         draw_arc(pos, 35.0, 0.0, TAU, 36, Color("ff5151"), 4.0, true)
@@ -771,86 +776,48 @@ func _player_angles(player: Dictionary) -> Dictionary:
     return {"hull": hull, "turret": turret}
 
 func _draw_missile(pos: Vector2, direction: Vector2) -> void:
-    var tail := pos - direction * 13.0
-    draw_line(tail - direction * 17.0, tail, Color(1.0, 0.29, 0.06, 0.30), 10.0, true)
-    draw_line(tail - direction * 13.0, tail, Color("ffba58"), 5.0, true)
-    draw_line(tail - direction * 8.0, tail, Color("fff9c4"), 2.0, true)
-    draw_set_transform(pos, direction.angle(), Vector2.ONE)
-    draw_texture_rect(MISSILE_TEXTURE, Rect2(-17, -8, 34, 16), false)
-    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+    ProjectileFX.draw_missile(self, pos, direction, MISSILE_TEXTURE)
 
 func _draw_shell(pos: Vector2, direction: Vector2) -> void:
     var n := direction.orthogonal()
-    draw_line(pos - direction * 24, pos - direction * 6, Color(.5, .85, 1, .3), 5, true)
-    draw_colored_polygon(PackedVector2Array([pos + direction * 11, pos + direction * 3 + n * 4, pos - direction * 10 + n * 4, pos - direction * 10 - n * 4, pos + direction * 3 - n * 4]), Color("b6cfdb"))
-    draw_line(pos - direction * 6, pos + direction * 5, Color.WHITE, 2.0, true)
+    draw_line(pos - direction * 30, pos - direction * 7, Color(.22, .72, 1, .14), 10, true)
+    draw_line(pos - direction * 25, pos - direction * 8, Color(.54, .9, 1, .48), 4, true)
+    draw_colored_polygon(PackedVector2Array([pos + direction * 13, pos + direction * 3 + n * 4.5, pos - direction * 10 + n * 4.5, pos - direction * 10 - n * 4.5, pos + direction * 3 - n * 4.5]), Color("576e84"))
+    draw_colored_polygon(PackedVector2Array([pos + direction * 12, pos + direction * 2 + n * 3, pos - direction * 7 + n * 3, pos - direction * 7 - n * 3, pos + direction * 2 - n * 3]), Color("c4e9ef"))
+    draw_line(pos - direction * 5 - n, pos + direction * 6 - n, Color.WHITE, 1.5, true)
 
 func _draw_hook(pos: Vector2, direction: Vector2, heavy: bool) -> void:
     var normal := direction.orthogonal()
     var width := 3.0 if heavy else 2.0
     var reach := 13.0 if heavy else 8.0
+    draw_line(pos - direction * 22, pos + direction * 5, Color(1.0, .21, .02, .18), width * 5.5, true)
     draw_line(pos - direction * 18, pos, Color("fa6625"), width * 2.5, true)
     draw_line(pos - direction * 14, pos, Color("ffd076"), width, true)
     draw_line(pos - direction * 5, pos + direction * reach, Color("d1d4d3"), width, true)
     draw_line(pos + direction * reach, pos + direction * (reach - 4) + normal * 7, Color("f4f3e9"), width, true)
     draw_line(pos + direction * (reach - 4) + normal * 7, pos + direction * (reach - 9) + normal * 5, Color("c7ced0"), width, true)
+    var flicker := float(Time.get_ticks_msec() % 600) / 600.0
+    for side in [-1, 1]:
+        var ember: Vector2 = pos - direction * (5.0 + 10.0 * flicker) + normal * side * (4.0 + 3.0 * flicker)
+        draw_circle(ember, 1.5 + (1.0 - flicker), Color(1.0, .65, .22, .8 * (1.0 - flicker)))
 
 func _draw_bat(pos: Vector2, angle: float, size: float, color: Color) -> void:
-    draw_set_transform(pos, angle, Vector2.ONE * (size / 10.0))
-    for side in [-1, 1]:
-        draw_colored_polygon(PackedVector2Array([Vector2(2, side), Vector2(-1, side * 5), Vector2(-9, side * 13), Vector2(-7, side * 6), Vector2(-12, side * 3), Vector2(-6, side * 2), Vector2(-3, 0)]), color)
-    draw_colored_polygon(PackedVector2Array([Vector2(9, 0), Vector2(3, -4), Vector2(-5, -3), Vector2(-8, 0), Vector2(-5, 3), Vector2(3, 4)]), color)
-    draw_circle(Vector2(4, 0), 2.0, Color("efe6ff"))
-    draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+    ProjectileFX.draw_bat(self, pos, angle, size, color)
 
 func _draw_arrow(pos: Vector2, direction: Vector2, kind: String) -> void:
-    var long_arrow := kind != "elf_shot"
-    var n := direction.orthogonal()
-    var length := 34.0 if long_arrow else 22.0
-    var color := Color("a6ef80") if kind == "elf_ult" else Color("f6e1a0")
-    draw_line(pos - direction * length, pos + direction * 6, color, 4.0 if long_arrow else 2.0, true)
-    draw_colored_polygon(PackedVector2Array([pos + direction * 10, pos - direction * 2 + n * 6, pos + direction * 1, pos - direction * 2 - n * 6]), Color("e8fff0") if kind == "elf_ult" else Color("f6f7ed"))
-    draw_line(pos - direction * length, pos - direction * (length - 8) + n * 5, Color("e8fff5"), 2.0)
-    draw_line(pos - direction * length, pos - direction * (length - 8) - n * 5, Color("e8fff5"), 2.0)
+    ProjectileFX.draw_arrow(self, pos, direction, kind)
 
 func _draw_ghost_zone(center: Vector2, life: float) -> void:
-    var radius := 125.0
-    draw_circle(center, radius, Color(.82, .12, .03, .19))
-    draw_arc(center, radius, 0, TAU, 64, Color("ff8d36"), 4.0, true)
-    draw_arc(center, radius * .8, 0, TAU, 64, Color("ffd26b"), 2.0, true)
-    for offset in [0.0, PI]:
-        var points := PackedVector2Array()
-        for i in range(4):
-            points.append(center + Vector2.from_angle(offset + float(i % 3) * TAU / 3.0 - PI / 2.0) * radius * .72)
-        draw_polyline(points, Color("ffbb54"), 3.0, true)
-    for i in range(8):
-        var angle := float(i) * TAU / 8.0 + life * .5
-        var start := center + Vector2.from_angle(angle) * 96.0
-        draw_line(start, start + Vector2(0, -10 - 5 * sin(life * 8 + i)), Color("ff6a25"), 4.0, true)
+    ZoneFX.draw_ghost(self, center, life)
 
-func _draw_vine_zone(center: Vector2, _life: float) -> void:
-    draw_circle(center, 78.0, Color(.21, .67, .21, .14))
-    draw_arc(center, 78.0, 0, TAU, 48, Color("a4e86b"), 2.0, true)
-    for i in range(8):
-        var angle := float(i) * TAU / 8.0
-        var start := center + Vector2.from_angle(angle) * 20
-        var end := center + Vector2.from_angle(angle + .2) * 70
-        draw_line(start, end, Color("469f51"), 4.0, true)
+func _draw_vine_zone(center: Vector2, life: float) -> void:
+    ZoneFX.draw_vine(self, center, life)
 
 func _draw_vines(pos: Vector2) -> void:
-    for i in range(3):
-        var y := -17.0 + i * 15.0
-        var points := PackedVector2Array([pos + Vector2(-25, y), pos + Vector2(-12, y - 5), pos + Vector2(0, y + 3), pos + Vector2(13, y - 4), pos + Vector2(25, y + 2)])
-        draw_polyline(points, Color("3a9d4d"), 4.0, true)
-        draw_polyline(points, Color("a3e678"), 1.5, true)
+    ZoneFX.draw_vines(self, pos)
 
 func _draw_bat_ultimate(pos: Vector2, angle: float, life: float) -> void:
-    var progress := clampf(1.0 - life / .6, 0.0, 1.0)
-    for i in range(12):
-        var spread := lerpf(-.5, .5, float(i) / 11.0)
-        var distance := (65.0 + float(i % 4) * 40.0) * (0.4 + .6 * progress)
-        var direction := Vector2.from_angle(angle + spread)
-        _draw_bat(pos + direction * distance, angle + spread, 19.0, Color("b47ce9"))
+    ProjectileFX.draw_bat_ultimate(self, pos, angle, life)
 
 func _draw_charge_orb(pos: Vector2, progress: float) -> void:
     var radius := 6.0 + progress * 16.0
@@ -860,6 +827,12 @@ func _draw_charge_orb(pos: Vector2, progress: float) -> void:
     draw_circle(pos, radius * 0.65, Color(0.65, 0.95, 1.0, 0.9))
     draw_circle(pos, radius * 0.3, Color.WHITE)
     draw_arc(pos, radius * 1.14, 0.0, TAU, 32, Color(0.65, 0.95, 1.0, 0.7), 2.0, true)
+    var phase := float(Time.get_ticks_msec()) * .004
+    for i in range(5):
+        var angle := phase + TAU * i / 5.0
+        var spark := pos + Vector2.from_angle(angle) * radius * (1.18 + .13 * sin(phase * 1.7 + i))
+        draw_line(spark, pos + (spark - pos) * .72, Color(.63, .94, 1.0, .62), 1.5, true)
+        draw_circle(spark, 1.7, Color("e7fdff"))
 
 func _draw_laser(origin: Vector2, effect: Dictionary) -> void:
     var dir := Vector2.RIGHT.rotated(float(effect.angle))
@@ -873,6 +846,11 @@ func _draw_laser(origin: Vector2, effect: Dictionary) -> void:
     draw_line(start, end, Color(0.50, 0.93, 1.0, 0.85 * fade), 31.0, true)
     draw_line(start, end, Color(0.88, 1.0, 1.0, fade), 17.0, true)
     draw_line(start, end, Color(1.0, 1.0, 1.0, fade), 7.0, true)
+    var normal := dir.orthogonal()
+    for side in [-1, 1]:
+        draw_line(start + normal * side * 16.0, end + normal * side * 16.0, Color(.65, .98, 1.0, .38 * fade), 1.5, true)
+    draw_circle(end, 22.0, Color(.19, .73, 1.0, .14 * fade))
+    draw_circle(end, 9.0, Color(.73, .97, 1.0, .35 * fade))
     _draw_charge_orb(start, 1.0)
 
 func _draw_bombardment(center: Vector2, elapsed: float) -> void:
@@ -896,6 +874,9 @@ func _draw_bombardment(center: Vector2, elapsed: float) -> void:
             draw_circle(impact, size, Color(1.0, 0.42, 0.06, 0.65 * alpha))
             draw_circle(impact, size * 0.58, Color(1.0, 0.86, 0.35, 0.8 * alpha))
             draw_arc(impact, size * 1.25, 0.0, TAU, 24, Color(1.0, 0.79, 0.35, 0.7 * alpha), 2.0, true)
+            for j in range(6):
+                var ray := Vector2.from_angle(j * TAU / 6.0 + i)
+                draw_line(impact + ray * size * .7, impact + ray * size * (1.3 + blast), Color(1.0, .72, .24, .65 * alpha), 2.0, true)
 
 func _draw_aim() -> void:
     if aim_mode.is_empty():
